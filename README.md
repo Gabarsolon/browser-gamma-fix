@@ -16,15 +16,15 @@ Google Chrome, Microsoft Edge, Brave and Vivaldi** while Windows HDR is enabled.
 browsers on their native HDR/scRGB presentation path but interprets ordinary
 BT.709/sRGB SDR content using pure gamma 2.2.
 
-> **[Download Browser Gamma Fix v0.7.0 — Chrome, Edge, Brave and Vivaldi](https://github.com/mrsaliericz/browser-gamma-fix/releases/latest)**
+> **[Download Browser Gamma Fix v0.7.1 — Chrome, Edge, Brave and Vivaldi](https://github.com/mrsaliericz/browser-gamma-fix/releases/latest)**
 
 Portable or isolated browser copies are not required. Browser Gamma Fix runs in the
 Windows notification area and applies the correction only in process memory;
 it does not modify browser files on disk.
 
-> **Stable v0.7.0 — 16 September 2026:** Adds **Vivaldi** support and the new
-> **Browser Gamma Fix** name, plus application update checks and user-confirmed
-> installation. Run one tray application to monitor all four supported browsers.
+> **Stable v0.7.1 — 20 September 2026:** Adds verified support for Microsoft
+> Edge `153.0.4234.48`, which uses 99 sRGB singleton initializers. Run one tray
+> application to monitor all four supported browsers.
 
 The Edge analyzer decodes x64 instructions and follows arguments and branches,
 allowing verified changes in registers, stack offsets and code placement.
@@ -160,6 +160,15 @@ unknown or ambiguous layouts are still rejected before any write occurs.
 This confirms compatibility with the updates tested so far, not every future
 Chromium layout. Unfamiliar layouts still fail closed and are reported in the
 diagnostic log.
+
+### Edge 153.0.4234.48 (v0.7.1)
+
+Edge `153.0.4234.48` changed the recognized singleton count from 97 to 99.
+v0.7.1 accepts this count only alongside the existing exact checks for one
+BT.709/sRGB/gamma 2.2 constant block, one factory/pointer tuple, every sRGB
+load, every singleton store, and the verified SDR/WCG/HDR output path. The
+author confirmed the runtime result. Unknown counts and ambiguous layouts still
+fail closed.
 
 ### More resilient Edge output analysis
 
@@ -319,7 +328,7 @@ Explore my work: **[jaroslavsafar.com](https://jaroslavsafar.com)**.
 - Portfolio: [jaroslavsafar.com](https://jaroslavsafar.com)
 - Contact: [hello@jaroslavsafar.com](mailto:hello@jaroslavsafar.com)
 - License: [MIT](LICENSE)
-- Current stable release: [Browser Gamma Fix v0.7.0](https://github.com/mrsaliericz/browser-gamma-fix/releases/tag/v0.7.0)
+- Current stable release: [Browser Gamma Fix v0.7.1](https://github.com/mrsaliericz/browser-gamma-fix/releases/tag/v0.7.1)
 
 Historical documentation for the retired version-specific workflows is kept
 in [`archive/LEGACY_VERSION_SPECIFIC_PATCHER.md`](archive/LEGACY_VERSION_SPECIFIC_PATCHER.md).
