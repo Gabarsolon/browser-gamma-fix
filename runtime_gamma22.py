@@ -64,9 +64,10 @@ PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 MAX_PATH = 260
 ULONG_PTR = ctypes.c_size_t
 
-# Verified layouts: Edge 151.0.4129.107 has 98; Edge 152.0.4191.53 has 97.
-# A known count is only one check, not permission to skip structural validation.
-EDGE_SINGLETON_INITIALIZER_COUNTS = frozenset({97, 98})
+# Verified layouts: Edge 151.0.4129.107 has 98; Edge 152.0.4191.53 has 97;
+# Edge 153.0.4234.48 has 99. A known count is only one check, not permission
+# to skip structural validation.
+EDGE_SINGLETON_INITIALIZER_COUNTS = frozenset({97, 98, 99})
 
 
 class STARTUPINFOW(ctypes.Structure):
@@ -562,9 +563,9 @@ def discover_edge_runtime_layout(dll: Path) -> dict:
         )
     singleton_factory_rva, singleton_pointer_rva = constructor_tuples.pop()
 
-    # Accepting both counts must not turn a partially recognized 98-initializer
-    # layout into an apparently valid 97-initializer layout. Account for every
-    # load of this canonical sRGB constant and every store to its singleton.
+    # Accepting multiple known counts must not turn a partially recognized
+    # layout into an apparently valid lower-count layout. Account for every load
+    # of this canonical sRGB constant and every store to its singleton.
     if srgb_load_rvas != {rva for rva, _factory, _pointer in constructors}:
         raise PatchError("Unrecognized Edge sRGB singleton initializer load")
     singleton_store_rvas: set[int] = set()
