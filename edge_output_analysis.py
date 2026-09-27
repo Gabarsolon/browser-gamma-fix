@@ -23,6 +23,113 @@ def family(ins, reg):
     return aliases.get(name, name)
 
 
+def find_compact_output_loop(dll, sections, text, text_rva):
+    """Verify Edge 154's compact split ScreenWin output loop.
+
+    This compiler variant keeps the two output-helper calls and the SDR/WCG
+    usage table in a cold function fragment. It is deliberately accepted only
+    when every relationship below is unique and structurally exact.
+    """
+    helpers = []
+    position = 0
+    while (position := text.find(HDR_OUTPUT_HELPER_BYTES, position)) >= 0:
+        helpers.append(text_rva + position)
+        position += 1
+    if len(helpers) != 1:
+        raise PatchError('Compact Edge analysis requires one exact output helper')
+    helper = helpers[0]
+
+    def call_target(position):
+        if position + 5 > len(text) or text[position] != 0xE8:
+            return None
+        return text_rva + position + 5 + struct.unpack_from('<i', text, position + 1)[0]
+
+    def read(rva, size):
+        with dll.open('rb') as stream:
+            stream.seek(rva_to_offset(sections, rva))
+            return stream.read(size)
+
+    candidates = []
+    position = 0
+    loop_prefix = b'\x48\xff\xc7\x48\x83\xff\x02'
+    while (position := text.find(loop_prefix, position)) >= 0:
+        # inc rdi; cmp rdi, 2; je; call; lea rcx, [rip + usage table];
+        # mov cl, [rdi + rcx]; mov [rsp + disp8], cl; cmp eax, 12; jl.
+        code = text[position:position + 72]
+        if code[7:8] == b'\x74':
+            jump_size = 2
+        elif code[7:9] == b'\x0f\x84':
+            jump_size = 6
+        else:
+            position += 1
+            continue
+        call_offset = 7 + jump_size
+        lea_offset = call_offset + 5
+        load_offset = lea_offset + 7
+        store_offset = load_offset + 3
+        compare_offset = store_offset + 4
+        if (
+            len(code) < compare_offset + 4
+            or code[:7] != loop_prefix[:7]
+            or call_target(position + call_offset) is None
+            or code[lea_offset:lea_offset + 3] != b'\x48\x8d\x0d'
+            or code[load_offset:load_offset + 3] != b'\x8a\x0c\x0f'
+            or code[store_offset:store_offset + 3] != b'\x88\x4c\x24'
+            or code[compare_offset:compare_offset + 3] != b'\x83\xf8\x0c'
+            or code[compare_offset + 3] != 0x7C
+        ):
+            position += 1
+            continue
+        table = (
+            text_rva + position + lea_offset + 7
+            + struct.unpack_from('<i', code, lea_offset + 3)[0]
+        )
+        if read(table, 3) != b'\x01\x02\x00':
+            position += 1
+            continue
+
+        # The immediately preceding fragment must make exactly two calls to the
+        # one verified helper: output plane 0 then output plane 1. Both calls
+        # must consume the byte saved from the same usage-table stack slot.
+        call_rvas = [
+            text_rva + candidate
+            for candidate in range(max(0, position - 80), position)
+            if call_target(candidate) == helper
+        ]
+        if len(call_rvas) != 2:
+            position += 1
+            continue
+        call_positions = [rva - text_rva for rva in call_rvas]
+        first_context = text[max(0, call_positions[0] - 24):call_positions[0]]
+        second_context = text[max(0, call_positions[1] - 24):call_positions[1]]
+        usage_stack_offset = code[store_offset + 3]
+        usage_load = b'\x8a\x54\x24' + bytes((usage_stack_offset,))
+        if (
+            b'\x45\x31\xc0' not in first_context
+            or b'\x41\xb0\x01' not in second_context
+            or usage_load not in first_context
+            or usage_load not in second_context
+        ):
+            position += 1
+            continue
+        candidates.append((text_rva + position + 3, table, helper))
+        position += 1
+
+    if len(candidates) != 1:
+        raise PatchError(
+            f'Expected one verified compact Edge output loop; found {len(candidates)}'
+        )
+    loop_limit_rva, usage_table_rva, output_helper_rva = candidates[0]
+    return dict(
+        loop_limit_rva=loop_limit_rva,
+        usage_table_rva=usage_table_rva,
+        output_helper_rva=output_helper_rva,
+        loop_context=b'',
+        loop_original=b'\x48\x83\xff\x02',
+        loop_patched=b'\x48\x83\xff\x03',
+    )
+
+
 def find_split_output_loop(dll, sections, text, text_rva):
     decoder = Cs(CS_ARCH_X86, CS_MODE_64)
     decoder.detail = True
