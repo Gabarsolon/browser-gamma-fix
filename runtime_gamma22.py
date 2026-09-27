@@ -629,8 +629,11 @@ def discover_edge_runtime_layout(dll: Path) -> dict:
         if table == b"\x01\x02\x00":
             loop_candidates.append((loop_rva, table_rva, call1_target, candidate))
     if not loop_candidates:
-        from edge_output_analysis import find_split_output_loop
-        semantic = find_split_output_loop(dll, sections, text, text_rva)
+        from edge_output_analysis import find_compact_output_loop, find_split_output_loop
+        try:
+            semantic = find_compact_output_loop(dll, sections, text, text_rva)
+        except PatchError:
+            semantic = find_split_output_loop(dll, sections, text, text_rva)
         loop_candidates.append((semantic['loop_limit_rva'], semantic['usage_table_rva'],
                                 semantic['output_helper_rva'], semantic['loop_context']))
     else:

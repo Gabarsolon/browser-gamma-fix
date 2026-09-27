@@ -16,15 +16,15 @@ Google Chrome, Microsoft Edge, Brave and Vivaldi** while Windows HDR is enabled.
 browsers on their native HDR/scRGB presentation path but interprets ordinary
 BT.709/sRGB SDR content using pure gamma 2.2.
 
-> **[Download Browser Gamma Fix v0.7.1 — Chrome, Edge, Brave and Vivaldi](https://github.com/mrsaliericz/browser-gamma-fix/releases/latest)**
+> **[Download Browser Gamma Fix v0.7.2 — Chrome, Edge, Brave and Vivaldi](https://github.com/mrsaliericz/browser-gamma-fix/releases/latest)**
 
 Portable or isolated browser copies are not required. Browser Gamma Fix runs in the
 Windows notification area and applies the correction only in process memory;
 it does not modify browser files on disk.
 
-> **Stable v0.7.1 — 20 September 2026:** Adds verified support for Microsoft
-> Edge `153.0.4234.48`, which uses 99 sRGB singleton initializers. Run one tray
-> application to monitor all four supported browsers.
+> **Stable v0.7.2 — 27 September 2026:** Adds verified support for Microsoft
+> Edge `154.0.4258.37`, including its new compact SDR/WCG/HDR output loop.
+> Run one tray application to monitor all four supported browsers.
 
 The Edge analyzer decodes x64 instructions and follows arguments and branches,
 allowing verified changes in registers, stack offsets and code placement.
@@ -169,6 +169,16 @@ BT.709/sRGB/gamma 2.2 constant block, one factory/pointer tuple, every sRGB
 load, every singleton store, and the verified SDR/WCG/HDR output path. The
 author confirmed the runtime result. Unknown counts and ambiguous layouts still
 fail closed.
+
+### Edge 154.0.4258.37 (v0.7.2)
+
+Edge `154.0.4258.37` uses a new compact, cold-fragment layout for its
+SDR/WCG/HDR output loop. v0.7.2 accepts it only when it finds one exact HDR
+output helper, exactly two adjacent helper calls for output planes 0 and 1,
+the shared indexed `01 02 00` usage table, a `cmp index, 2` loop limit, and
+the required table-byte flow into both calls. The author confirmed the live
+runtime result. Other compact candidates, missing relationships and ambiguous
+layouts are rejected.
 
 ### More resilient Edge output analysis
 
@@ -328,7 +338,7 @@ Explore my work: **[jaroslavsafar.com](https://jaroslavsafar.com)**.
 - Portfolio: [jaroslavsafar.com](https://jaroslavsafar.com)
 - Contact: [hello@jaroslavsafar.com](mailto:hello@jaroslavsafar.com)
 - License: [MIT](LICENSE)
-- Current stable release: [Browser Gamma Fix v0.7.1](https://github.com/mrsaliericz/browser-gamma-fix/releases/tag/v0.7.1)
+- Current stable release: [Browser Gamma Fix v0.7.2](https://github.com/mrsaliericz/browser-gamma-fix/releases/tag/v0.7.2)
 
 Historical documentation for the retired version-specific workflows is kept
 in [`archive/LEGACY_VERSION_SPECIFIC_PATCHER.md`](archive/LEGACY_VERSION_SPECIFIC_PATCHER.md).
