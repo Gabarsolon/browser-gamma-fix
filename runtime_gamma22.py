@@ -22,6 +22,7 @@ import struct
 import subprocess
 import sys
 
+import config
 from gamma22_patcher import (
     GAMMA22_TRANSFER_FUNCTION,
     HDR_OUTPUT_HELPER_BYTES,
@@ -689,8 +690,21 @@ def make_edge_runtime_plan(dll: Path) -> RuntimePlan:
         )
     if loop_original != layout.get('loop_original', b"\x48\x83\xFF\x02") or table_original != b"\x01\x02\x00":
         raise PatchError("Edge ScreenWin output state is not pristine")
+    target_transfer = config.get_active_transfer_function()
     writes.extend(
         (
+            MemoryWrite(
+                "gamma 2.2 transfer constant",
+                layout["gamma22_transfer_rva"],
+                GAMMA22_TRANSFER_FUNCTION,
+                target_transfer,
+            ),
+            MemoryWrite(
+                "sRGB transfer constant",
+                layout["srgb_transfer_rva"],
+                SRGB_TRANSFER_FUNCTION,
+                target_transfer,
+            ),
             MemoryWrite(
                 "ScreenWin usage loop limit",
                 layout["loop_limit_rva"],
@@ -707,8 +721,6 @@ def make_edge_runtime_plan(dll: Path) -> RuntimePlan:
     )
     checks = [
         ("sRGB gamut", layout["srgb_gamut_rva"], SRGB_GAMUT),
-        ("sRGB transfer", layout["srgb_transfer_rva"], SRGB_TRANSFER_FUNCTION),
-        ("gamma 2.2 transfer", layout["gamma22_transfer_rva"], GAMMA22_TRANSFER_FUNCTION),
         ("ScreenWin output helper", layout["output_helper_rva"], HDR_OUTPUT_HELPER_BYTES),
     ]
     checks.extend(layout.get('semantic_checks', []))
@@ -720,7 +732,21 @@ def make_runtime_plan(dll: Path) -> RuntimePlan:
         return make_edge_runtime_plan(dll)
     layout = discover_chrome_runtime_layout(dll)
     sections = read_pe_sections(dll)
-    color_writes: list[MemoryWrite] = []
+    target_transfer = config.get_active_transfer_function()
+    color_writes: list[MemoryWrite] = [
+        MemoryWrite(
+            "gamma 2.2 transfer constant",
+            layout["gamma22_transfer_rva"],
+            GAMMA22_TRANSFER_FUNCTION,
+            target_transfer,
+        ),
+        MemoryWrite(
+            "sRGB transfer constant",
+            layout["srgb_transfer_rva"],
+            SRGB_TRANSFER_FUNCTION,
+            target_transfer,
+        ),
+    ]
     with dll.open("rb") as stream:
         for index, (first, second) in enumerate(layout["initializer_pairs"], 1):
             for half, instruction_rva, target_rva in (
@@ -764,8 +790,6 @@ def make_runtime_plan(dll: Path) -> RuntimePlan:
     ]
     checks = [
         ("sRGB gamut", layout["srgb_gamut_rva"], SRGB_GAMUT),
-        ("sRGB transfer", layout["srgb_transfer_rva"], SRGB_TRANSFER_FUNCTION),
-        ("gamma 2.2 transfer", layout["gamma22_transfer_rva"], GAMMA22_TRANSFER_FUNCTION),
         ("ScreenWin output helper", layout["set_output_call_rva"], HDR_OUTPUT_HELPER_BYTES),
     ]
     return RuntimePlan(dll, sha256(dll), layout, checks, writes)
@@ -790,7 +814,9 @@ def patch_loaded_module(
     mismatches = [
         item.label
         for data, item in zip(current, plan.writes)
-        if data != item.original
+        if data != item.original and not (
+            item.label.endswith("transfer constant") and config.is_valid_transfer_function(data)
+        )
     ]
     if mismatches:
         raise PatchError(

@@ -17,6 +17,7 @@ import hashlib
 
 import hot_attach_gamma22 as hot
 import app_updates
+import config
 
 
 WM_DESTROY = 0x0002
@@ -39,6 +40,7 @@ NIF_TIP = 0x04
 MF_STRING = 0
 MF_GRAYED = 0x01
 MF_CHECKED = 0x08
+MF_POPUP = 0x0010
 MF_SEPARATOR = 0x0800
 TPM_RIGHTBUTTON = 0x0002
 TPM_RETURNCMD = 0x0100
@@ -56,6 +58,10 @@ CMD_CHECK_UPDATE = 106
 CMD_INSTALL_UPDATE = 107
 CMD_UPDATE_STATUS = 108
 CMD_SUPPORT = 109
+CMD_NITS_1000 = 200
+CMD_NITS_800 = 201
+CMD_NITS_600 = 202
+CMD_NITS_MATCH_SDR = 203
 UPDATE_POLL_SECONDS = 5.0
 FAILED_GENERATION_RETRY_SECONDS = 30.0
 UPDATE_RESTART_SETTLE_SECONDS = 15.0
@@ -588,13 +594,30 @@ def finish_fix_toggle() -> None:
         switch_in_progress = False
 
 
+repatch_requested = False
+repatch_lock = threading.Lock()
+
+
+def request_repatch() -> None:
+    global repatch_requested
+    with repatch_lock:
+        repatch_requested = True
+
+
+def set_brightness_level(nits: float) -> None:
+    config.set_target_nits(nits)
+    request_repatch()
+    set_status(f"Setting brightness to {nits:.0f} nits…")
+
+
 def update_tray_state() -> None:
     if notify_data is None:
         return
     enabled, _switching = fix_mode()
     notify_data.uFlags = NIF_ICON | NIF_TIP
     notify_data.hIcon = active_icon if enabled else inactive_icon
-    notify_data.szTip = f"Chromium Gamma 2.2 — {status_text()}"[:127]
+    nits_str = f"{config.get_target_nits():.0f} nits"
+    notify_data.szTip = f"Chromium Gamma 2.2 ({nits_str}) — {status_text()}"[:127]
     shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(notify_data))
 
 
@@ -698,6 +721,18 @@ def show_menu(hwnd) -> None:
         toggle_flags = MF_STRING | (MF_GRAYED if switching else 0)
         user32.AppendMenuW(menu, toggle_flags, CMD_TOGGLE, toggle_label)
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+
+        # SDR Brightness submenu
+        brightness_menu = user32.CreatePopupMenu()
+        cur_nits = config.get_target_nits()
+        sdr_sys = config.get_system_sdr_white_level()
+        user32.AppendMenuW(brightness_menu, MF_STRING | (MF_CHECKED if abs(cur_nits - 1000.0) < 1.0 else 0), CMD_NITS_1000, "1000 nits (Full HDR Match)")
+        user32.AppendMenuW(brightness_menu, MF_STRING | (MF_CHECKED if abs(cur_nits - 800.0) < 1.0 else 0), CMD_NITS_800, "800 nits")
+        user32.AppendMenuW(brightness_menu, MF_STRING | (MF_CHECKED if abs(cur_nits - 600.0) < 1.0 else 0), CMD_NITS_600, "600 nits")
+        user32.AppendMenuW(brightness_menu, MF_STRING | (MF_CHECKED if abs(cur_nits - sdr_sys) < 1.0 else 0), CMD_NITS_MATCH_SDR, f"Match Windows SDR Slider ({sdr_sys:.0f} nits)")
+        user32.AppendMenuW(menu, MF_POPUP, brightness_menu, f"SDR Brightness ({cur_nits:.0f} nits)")
+        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+
         autostart_flags = MF_STRING
         if autostart_enabled():
             autostart_flags |= MF_CHECKED
@@ -730,6 +765,14 @@ def show_menu(hwnd) -> None:
         )
         if command == CMD_TOGGLE:
             request_fix_toggle()
+        elif command == CMD_NITS_1000:
+            set_brightness_level(1000.0)
+        elif command == CMD_NITS_800:
+            set_brightness_level(800.0)
+        elif command == CMD_NITS_600:
+            set_brightness_level(600.0)
+        elif command == CMD_NITS_MATCH_SDR:
+            set_brightness_level(config.get_system_sdr_white_level())
         elif command == CMD_AUTOSTART:
             toggle_autostart()
         elif command == CMD_ABOUT:
@@ -853,6 +896,7 @@ def supported_browser_locations():
 
 
 def worker() -> None:
+    global repatch_requested
     browser_locations = supported_browser_locations()
     targets = []
     states = {}
@@ -916,13 +960,29 @@ def worker() -> None:
         request_release_check()
         enabled, _switching = fix_mode()
         mode_changed = enabled != last_enabled
-        if mode_changed:
-            destination = "on" if enabled else "off"
-            print(f"Switching Gamma 2.2 fix {destination} for all running browsers")
+        with repatch_lock:
+            do_repatch = repatch_requested
+            repatch_requested = False
+        if mode_changed or do_repatch:
+            if mode_changed:
+                destination = "on" if enabled else "off"
+                print(f"Switching Gamma 2.2 fix {destination} for all running browsers")
+            if do_repatch:
+                print(f"Applying updated SDR brightness ({config.get_target_nits():.0f} nits)")
             for target in targets:
+                target["generations"].plans_by_dll.clear()
+                target["generations"]._plans_by_identity.clear()
+                if target["generations"].active_dll is not None:
+                    try:
+                        target["generations"].activate(target["generations"].active_dll)
+                    except Exception as err:
+                        print(f"Re-activation error: {err}")
                 target["completed"].clear()
                 target["verified"].clear()
-                states[target["name"]] = f"switching {destination}"
+                if mode_changed:
+                    states[target["name"]] = f"switching {destination}"
+                else:
+                    states[target["name"]] = f"updating brightness"
             publish_status()
         for target in targets:
             name = target["name"]
@@ -1069,6 +1129,17 @@ def main() -> int:
     global active_icon, inactive_icon, log_path, notify_data, owned_icons, window_handle, fix_enabled
     if '--start-fix-disabled' in sys.argv:
         fix_enabled = False
+    for i, arg in enumerate(sys.argv):
+        if arg == '--nits' and i + 1 < len(sys.argv):
+            try:
+                config.set_target_nits(float(sys.argv[i + 1]))
+            except ValueError:
+                pass
+        elif arg.startswith('--nits='):
+            try:
+                config.set_target_nits(float(arg.split('=', 1)[1]))
+            except ValueError:
+                pass
     if not wait_for_restart_parent(sys.argv[1:]):
         return 1
     log_path = hot.configure_background_process()
@@ -1100,7 +1171,10 @@ def main() -> int:
     notify_data.hIcon = active_icon
     notify_data.szTip = "Chromium Gamma 2.2 — Starting"
     if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(notify_data)):
-        raise ctypes.WinError(ctypes.get_last_error())
+        shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(notify_data))
+        time.sleep(0.05)
+        if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(notify_data)):
+            shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(notify_data))
     notify_data.uVersion = NOTIFYICON_VERSION_4
     shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(notify_data))
     app_updates.confirm_startup(sys.argv[1:], APP_VERSION)

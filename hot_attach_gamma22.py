@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 
+import config
 from gamma22_patcher import (
     GAMMA22_TRANSFER_FUNCTION,
     PatchError,
@@ -233,7 +234,11 @@ def process_command_line(pid: int) -> str:
 
 
 def patch_live_srgb_objects(
-    process: wintypes.HANDLE, pid: int, *, restore: bool = False
+    process: wintypes.HANDLE,
+    pid: int,
+    *,
+    restore: bool = False,
+    target_transfer: bytes | None = None,
 ) -> list[int]:
     """Patch already-created canonical sRGB Skia data in private writable memory.
 
@@ -242,17 +247,14 @@ def patch_live_srgb_objects(
     the complete 64-byte [transfer function][BT.709 gamut] tuple so unrelated
     floats and wide-gamut/HDR color spaces cannot be selected.
     """
-    if restore:
-        original = GAMMA22_TRANSFER_FUNCTION + SRGB_GAMUT
-        replacement_transfer = SRGB_TRANSFER_FUNCTION
-    else:
-        original = SRGB_TRANSFER_FUNCTION + SRGB_GAMUT
-        replacement_transfer = GAMMA22_TRANSFER_FUNCTION
-    replacement = replacement_transfer + SRGB_GAMUT
+    if target_transfer is None:
+        target_transfer = config.get_active_transfer_function()
+    desired_transfer = SRGB_TRANSFER_FUNCTION if restore else target_transfer
     matches: list[int] = []
     address = 0
     maximum_user_address = 0x00007FFFFFFFFFFF
     chunk_size = 4 * 1024 * 1024
+    carry_len = 28 + len(SRGB_GAMUT) - 1
 
     while address < maximum_user_address:
         mbi = MEMORY_BASIC_INFORMATION()
@@ -293,32 +295,37 @@ def patch_live_srgb_objects(
                 searchable_base = base + offset - len(carry)
                 start = 0
                 while True:
-                    found = searchable.find(original, start)
+                    found = searchable.find(SRGB_GAMUT, start)
                     if found < 0:
                         break
-                    match_address = searchable_base + found
-                    if match_address not in matches:
-                        matches.append(match_address)
+                    if found >= 28:
+                        candidate_tf = searchable[found - 28 : found]
+                        if config.is_valid_transfer_function(candidate_tf, allow_srgb=True):
+                            match_address = searchable_base + found - 28
+                            if match_address not in matches:
+                                matches.append(match_address)
                     start = found + 1
-                carry = searchable[-(len(original) - 1) :]
+                carry = searchable[-carry_len:] if len(searchable) >= carry_len else searchable
                 offset += amount
         address = next_address
 
+    written_matches: list[int] = []
     for match_address in matches:
-        # Revalidate the complete tuple immediately before writing. The target
-        # is suspended by the debugger, but this also keeps the operation
-        # fail-closed if the implementation changes later.
-        if read_memory(process, match_address, len(original)) != original:
+        current_tf = read_memory(process, match_address, 28)
+        if current_tf == desired_transfer:
+            continue
+        if not config.is_valid_transfer_function(current_tf, allow_srgb=True):
             raise PatchError(
                 f"PID {pid}: live sRGB object changed at 0x{match_address:X}"
             )
-        write_memory(process, match_address, replacement_transfer)
-        if read_memory(process, match_address, len(replacement)) != replacement:
+        write_memory(process, match_address, desired_transfer)
+        if read_memory(process, match_address, 28) != desired_transfer:
             raise PatchError(
                 f"PID {pid}: live gamma 2.2 verification failed at "
                 f"0x{match_address:X}"
             )
-    return matches
+        written_matches.append(match_address)
+    return written_matches
 
 
 def reconcile_module_for_role(
@@ -335,6 +342,7 @@ def reconcile_module_for_role(
     restored_to_upstream = 0
     for item in plan.writes:
         is_gamma_initializer = item.label.startswith("sRGB initializer ")
+        is_transfer_constant = item.label.endswith("transfer constant")
         is_output_hook = item.label in {
             "SDR scRGB/F16 trampoline",
             "ScreenWin SDR output hook",
@@ -342,7 +350,8 @@ def reconcile_module_for_role(
             "ScreenWin usage table",
         }
         should_be_patched = enabled and (
-            (role == "gpu" and is_gamma_initializer)
+            (role in ("gpu", "browser") and is_transfer_constant)
+            or (role == "gpu" and is_gamma_initializer)
             or (role == "browser" and is_output_hook)
         )
         desired = item.patched if should_be_patched else item.original
@@ -351,7 +360,10 @@ def reconcile_module_for_role(
         current = read_memory(process, address, len(desired))
         if current == desired:
             continue
-        if current != alternate:
+        is_valid_transition = (current == alternate) or (
+            is_transfer_constant and config.is_valid_transfer_function(current)
+        )
+        if not is_valid_transition:
             raise PatchError(
                 f"PID {pid}: unexpected bytes for {item.label} at 0x{address:X}"
             )
@@ -443,8 +455,12 @@ def module_matches_plan(process, module_base: int, plan) -> bool:
                 return False
         for item in plan.writes:
             current = read_memory(process, module_base + item.rva, len(item.original))
-            if current not in (item.original, item.patched):
-                return False
+            if item.label.endswith("transfer constant"):
+                if not (current in (item.original, item.patched) or config.is_valid_transfer_function(current)):
+                    return False
+            else:
+                if current not in (item.original, item.patched):
+                    return False
     except (OSError, PatchError):
         return False
     return True
@@ -915,7 +931,22 @@ def main(
         action="store_true",
         help="Restore experimental live cached gamma objects to canonical sRGB",
     )
+    parser.add_argument(
+        "--nits",
+        type=float,
+        help="Target SDR brightness in nits (default: 1000.0, or from config)",
+    )
+    parser.add_argument(
+        "--sdr-white",
+        type=float,
+        help="Override primary monitor SDR white level in nits (default: from registry)",
+    )
     args = parser.parse_args(argv)
+
+    if args.nits is not None:
+        config.set_target_nits(args.nits)
+    if args.sdr_white is not None:
+        config.DEFAULT_SDR_WHITE_NITS = args.sdr_white
 
     try:
         report_status("Analyzing installed Chrome")
