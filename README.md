@@ -65,6 +65,23 @@ The correction is deliberately limited to ordinary SDR BT.709/sRGB content:
 4. Run `Gamma22Tray.exe` normally. Do not use **Run as administrator**.
 5. Start or continue using the normally installed Chrome, Edge, Brave or Vivaldi.
 
+### Windows Package Manager (WinGet)
+
+An official WinGet package has been submitted for review in
+[microsoft/winget-pkgs#446237](https://github.com/microsoft/winget-pkgs/pull/446237).
+After that manifest is accepted and published, Browser Gamma Fix can be installed
+without manually downloading the ZIP:
+
+```powershell
+winget install --id JaroslavSafar.BrowserGammaFix --exact --source winget
+BrowserGammaFix.exe
+```
+
+For a WinGet-managed installation, use `winget upgrade --id
+JaroslavSafar.BrowserGammaFix --exact` to update it. This keeps Windows Package
+Manager's installed-version record in sync; the app's built-in updater remains
+intended for ZIP installations.
+
 Brave Stable is detected in its standard Program Files or per-user
 `%LOCALAPPDATA%` installation directory. Brave Beta/Nightly channels and
 arbitrary custom installation paths are not automatically detected.
