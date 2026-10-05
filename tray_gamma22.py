@@ -1125,6 +1125,19 @@ def worker() -> None:
         stop_event.wait(0.5)
 
 
+def ensure_default_desktop() -> None:
+    try:
+        user32.OpenDesktopW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        user32.OpenDesktopW.restype = wintypes.HANDLE
+        user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
+        user32.SetThreadDesktop.restype = wintypes.BOOL
+        hDesk = user32.OpenDesktopW("default", 0, False, 0x01FF)
+        if hDesk:
+            user32.SetThreadDesktop(hDesk)
+    except Exception as e:
+        print(f"ensure_default_desktop failed: {e}")
+
+
 def main() -> int:
     global active_icon, inactive_icon, log_path, notify_data, owned_icons, window_handle, fix_enabled
     if '--start-fix-disabled' in sys.argv:
@@ -1147,6 +1160,7 @@ def main() -> int:
         return 0
     hot.set_status_callback(set_status)
 
+    ensure_default_desktop()
     instance = kernel32.GetModuleHandleW(None)
     class_name = "ChromiumGamma22TrayWindow"
     window_class = WNDCLASSW()
