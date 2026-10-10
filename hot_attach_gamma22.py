@@ -403,8 +403,11 @@ def windows_for_processes(pids: set[int]) -> list[int]:
             result.add(int(hwnd))
         return True
 
+    ctypes.set_last_error(0)
     if not user32.EnumWindows(collect, 0):
-        raise win_error("EnumWindows")
+        err = ctypes.get_last_error()
+        if err not in (0, 6):  # ERROR_INVALID_WINDOW_HANDLE (6) when window is destroyed during enum
+            raise win_error("EnumWindows")
 
     # Chromium's gfx::SingletonHwnd is a message-only window.  Such windows
     # are not returned by EnumWindows and do not receive HWND_BROADCAST.
