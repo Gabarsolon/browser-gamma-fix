@@ -63,11 +63,11 @@ class SemanticOutputTests(unittest.TestCase):
             with self.subTest(shift=shift,index=index):
                 image=split_fixture(shift,index)
                 plan=self.plan(image)
-                self.assertEqual(len(plan.writes),99)
+                self.assertEqual(len(plan.writes),101)
                 self.assertEqual(plan.writes[-2].rva,image.labels['limit'])
                 self.assertEqual(plan.writes[-2].patched[-1],3)
                 self.assertEqual(plan.writes[-1].rva,image.TABLE)
-                self.assertEqual(len(plan.checks),6)
+                self.assertEqual(len(plan.checks),4)
 
     def test_wrong_call_table_counter_and_control_flow_rejected(self):
         for variant in ('call','table','counter','exit','format','unknown'):

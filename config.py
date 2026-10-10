@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import time
 import winreg
 
 from gamma22_patcher import SRGB_TRANSFER_FUNCTION, GAMMA22_TRANSFER_FUNCTION
@@ -17,9 +18,17 @@ DEFAULT_SDR_WHITE_NITS = 480.0
 CONFIG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ChromiumGamma22"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+_cached_sdr_white_level: float | None = None
+_cached_sdr_white_time: float = 0.0
+
 
 def get_system_sdr_white_level() -> float:
     """Read primary monitor SDRWhiteLevel from GraphicsDrivers registry in nits."""
+    global _cached_sdr_white_level, _cached_sdr_white_time
+    now = time.monotonic()
+    if _cached_sdr_white_level is not None and (now - _cached_sdr_white_time) < 5.0:
+        return _cached_sdr_white_level
+
     path = r"SYSTEM\CurrentControlSet\Control\GraphicsDrivers\MonitorDataStore"
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
@@ -39,9 +48,13 @@ def get_system_sdr_white_level() -> float:
                 except OSError:
                     break
             if max_level > 0:
-                return float(max_level) * 80.0 / 1000.0
+                _cached_sdr_white_level = float(max_level) * 80.0 / 1000.0
+                _cached_sdr_white_time = now
+                return _cached_sdr_white_level
     except OSError:
         pass
+    _cached_sdr_white_level = DEFAULT_SDR_WHITE_NITS
+    _cached_sdr_white_time = now
     return DEFAULT_SDR_WHITE_NITS
 
 
@@ -111,7 +124,8 @@ def get_target_nits() -> float:
     if _in_memory_target_nits is not None:
         return _in_memory_target_nits
     cfg = load_config()
-    return float(cfg.get("target_nits", DEFAULT_TARGET_NITS))
+    _in_memory_target_nits = float(cfg.get("target_nits", DEFAULT_TARGET_NITS))
+    return _in_memory_target_nits
 
 
 def set_target_nits(nits: float, persist: bool = True) -> None:

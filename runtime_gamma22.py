@@ -66,9 +66,9 @@ MAX_PATH = 260
 ULONG_PTR = ctypes.c_size_t
 
 # Verified layouts: Edge 151.0.4129.107 has 98; Edge 152.0.4191.53 has 97;
-# Edge 153.0.4234.48 has 99. A known count is only one check, not permission
-# to skip structural validation.
-EDGE_SINGLETON_INITIALIZER_COUNTS = frozenset({97, 98, 99})
+# Edge 153.0.4234.48 has 99; Edge 154 has 99; Edge 155.0.4283.45 has 101.
+# A known count is only one check, not permission to skip structural validation.
+EDGE_SINGLETON_INITIALIZER_COUNTS = frozenset({97, 98, 99, 101})
 
 
 class STARTUPINFOW(ctypes.Structure):
@@ -644,6 +644,7 @@ def discover_edge_runtime_layout(dll: Path) -> dict:
             f"Expected one strict Edge SDR/WCG/HDR output loop; found {len(loop_candidates)}"
         )
     loop_rva, usage_table_rva, output_helper_rva, loop_context = loop_candidates[0]
+    del text
     if output_helper_rva < 0:
         raise PatchError("Invalid Edge ScreenWin output helper target")
 

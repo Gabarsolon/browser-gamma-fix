@@ -63,7 +63,7 @@ CMD_NITS_800 = 201
 CMD_NITS_600 = 202
 CMD_NITS_MATCH_SDR = 203
 UPDATE_POLL_SECONDS = 5.0
-FAILED_GENERATION_RETRY_SECONDS = 30.0
+FAILED_GENERATION_RETRY_SECONDS = 300.0
 UPDATE_RESTART_SETTLE_SECONDS = 15.0
 RESTART_WAIT_ARGUMENT = "--gamma22-restart-after-pid"
 RESTART_PARENT_TIMEOUT_MS = 60_000
@@ -358,7 +358,7 @@ class BrowserGenerations:
         self._clock = clock or time.monotonic
         self.plans_by_dll: dict[str, list] = {}
         self._plans_by_identity: dict[tuple[str, int, int], object] = {}
-        self._failed_identities: dict[tuple[str, int, int], tuple[float, Exception]] = {}
+        self._failed_identities: dict[tuple[str, int, int], tuple[float, type[Exception], str]] = {}
         self.active_identity: tuple[str, int, int] | None = None
         self.active_dll: Path | None = None
         self.active_error: str | None = None
@@ -392,17 +392,23 @@ class BrowserGenerations:
         now = self._clock()
         failed = self._failed_identities.get(identity)
         if failed is not None and now < failed[0]:
-            raise failed[1]
+            err_type, err_msg = failed[1], failed[2]
+            raise err_type(err_msg)
         try:
             plan = self._planner(resolved)
         except Exception as error:
+            err_msg = str(error)
+            err_type = type(error)
             self._failed_identities[identity] = (
                 now + FAILED_GENERATION_RETRY_SECONDS,
-                error,
+                err_type,
+                err_msg,
             )
             if isinstance(error, hot.PatchError) and self.on_unsupported is not None:
                 self.on_unsupported(resolved, identity)
-            raise
+            import gc
+            gc.collect()
+            raise err_type(err_msg) from None
 
         self._failed_identities.pop(identity, None)
         self._plans_by_identity[identity] = plan
@@ -430,6 +436,11 @@ class BrowserGenerations:
             if identity == self.active_identity:
                 self.active_error = None
                 return None
+            failed = self._failed_identities.get(identity)
+            if not force and failed is not None and now < failed[0]:
+                self.next_poll = failed[0]
+                self.active_error = failed[2]
+                return "error", self.active_error
             previous = self.active_dll
             plan, added, _changed = self.activate(candidate)
         except Exception as error:
@@ -1212,4 +1223,9 @@ if __name__ == "__main__":
             user32.MessageBoxW(None, f"Browser Gamma Fix update failed:\n\n{error}", APP_NAME, 0x10)
             raise SystemExit(1)
         raise SystemExit(0)
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        import traceback
+        traceback.print_exc()
+        raise SystemExit(1)

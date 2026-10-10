@@ -173,10 +173,11 @@ def configure_background_process() -> Path | None:
     log_path = log_root / "Gamma22HotAttach.log"
     _background_log_path = log_path
     log_stream = log_path.open("a", encoding="utf-8", buffering=1)
-    if sys.stdout is None:
-        sys.stdout = log_stream
-    if sys.stderr is None:
-        sys.stderr = log_stream
+    import io
+    unbuffered = io.TextIOWrapper(log_stream.buffer, encoding="utf-8", write_through=True)
+    sys.stdout = unbuffered
+    sys.stderr = unbuffered
+    threading.excepthook = lambda args: print(f"Unhandled thread exception in {args.thread.name}: {args.exc_value}", file=sys.stderr)
     print(f"\n--- Gamma22HotAttach started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
     ctypes.set_last_error(0)
@@ -411,8 +412,11 @@ def windows_for_processes(pids: set[int]) -> list[int]:
             result.add(int(hwnd))
         return True
 
+    ctypes.set_last_error(0)
     if not user32.EnumWindows(collect, 0):
-        raise win_error("EnumWindows")
+        err = ctypes.get_last_error()
+        if err not in (0, 6):  # ERROR_INVALID_WINDOW_HANDLE (6) when window is destroyed during enum
+            raise win_error("EnumWindows")
 
     # Chromium's gfx::SingletonHwnd is a message-only window.  Such windows
     # are not returned by EnumWindows and do not receive HWND_BROADCAST.
@@ -455,7 +459,8 @@ def module_matches_plan(process, module_base: int, plan) -> bool:
                 return False
         for item in plan.writes:
             current = read_memory(process, module_base + item.rva, len(item.original))
-            if item.label.endswith("transfer constant"):
+            label = getattr(item, "label", "")
+            if label.endswith("transfer constant"):
                 if not (current in (item.original, item.patched) or config.is_valid_transfer_function(current)):
                     return False
             else:
